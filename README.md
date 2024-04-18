@@ -1,6 +1,8 @@
 # BayesianHierarchicalModelInNutritionalEpidemiology
 This repository is a companion to the manuscript
+
 M. Pittavino, M. Plummer, M. Johansson, E. Riboli, P. Ferrari (2024)
+
 "A Bayesian hierarchical framework to integrate dietary exposure and biomarker measurements into aetiological models."
 
 
