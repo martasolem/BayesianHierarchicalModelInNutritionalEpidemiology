@@ -1,0 +1,176 @@
+#########################################################
+#                                                       #
+# R code for the analysis of the EPIC data with the     #
+# Bayesian Hierarchical Model                           #
+#                                                       #
+#########################################################
+
+# Load the packages
+
+library("coda")     # for run.jags()
+library("rjags")    # for run.jags()
+library("runjags")  # for run.jags()
+library("parallel") # for the parallelization of run.jags()
+load.module("glm")  # for run.jags
+
+# Load the data
+
+diseaseresidualall_b6foltot <- read.csv(".../OCMdataWCRF.csv")
+
+# Summary statistics of the data
+
+summary( diseaseresidualall_b6foltot) 
+
+names( diseaseresidualall_b6foltot)
+
+# Renomination of the data according to the BUG model
+
+Q_B6  <- diseaseresidualall_b6foltot$ResQEVITB6
+Q_FOL <- diseaseresidualall_b6foltot$ResQEFOLATE
+R_B6  <- diseaseresidualall_b6foltot$ResREVITB6
+R_FOL <- diseaseresidualall_b6foltot$ResREFOLATE
+M_B6  <- diseaseresidualall_b6foltot$ResVITB6
+M_FOL <- diseaseresidualall_b6foltot$ResFOLATE
+
+sd( Q_B6)
+sd( Q_FOL)
+sd( R_B6, na.rm = TRUE)
+sd( R_FOL, na.rm = TRUE)
+sd( M_B6)
+sd( M_FOL)
+
+var( Q_B6)
+var( Q_FOL)
+var( R_B6, na.rm = TRUE)
+var( R_FOL, na.rm = TRUE)
+var( M_B6)
+var( M_FOL)
+
+N <- length(Q_B6) 
+
+Caseset <- diseaseresidualall_b6foltot$Caseset;
+
+Diet <- cbind( Q_B6,Q_FOL,R_B6,R_FOL,M_B6,M_FOL) 
+
+############################################################################################# 
+# Data preparation for the Disease Model - Conditional Logistic Regression
+#############################################################################################
+
+CaseIndex <- which( diseaseresidualall_b6foltot$Disease=='Incident')
+names( diseaseresidualall_b6foltot) 
+StudyID <- as.factor( diseaseresidualall_b6foltot$STUDY)
+
+str(StudyID)
+table(StudyID)
+length( StudyID)
+
+length( StudyID[ CaseIndex])
+casestudy <- StudyID[ CaseIndex]
+
+length( which( diseaseresidualall_b6foltot$Caseset != 'NA'))
+CasesetIndex <- which( diseaseresidualall_b6foltot$Caseset != 'NA')
+CasesetNew <- diseaseresidualall_b6foltot$Caseset[ CasesetIndex]
+head( CasesetNew)
+str( CasesetNew)
+
+ContIndex <- which( diseaseresidualall_b6foltot$Disease=='Non-case')
+length( StudyID[ ContIndex])
+
+head( diseaseresidualall_b6foltot$Caseset[ CaseIndex])
+head( diseaseresidualall_b6foltot$Caseset[ ContIndex])
+
+str(CaseIndex)
+str(ContIndex)
+str(CasesetNew)
+
+contstudy <- StudyID[ ContIndex]
+
+identical( casestudy, contstudy)
+
+#identical( table( study), table(study2))
+
+stopifnot( identical(casestudy,contstudy))  
+
+N_Caseset <- length( CaseIndex)
+
+Bmi <- diseaseresidualall_b6foltot$Bmi_C
+
+Smoking <- as.factor(diseaseresidualall_b6foltot$Smoke_Stat)
+
+table(Smoking)
+
+########################################################################################
+## Create unique identifier for each case-control set starting from 1 and going up to
+## N_Caseset. The order of the labels does not matter as they are only used for the
+## risk set-specific random effects
+########################################################################################
+
+UniqueRiskSet <- interaction(CasesetNew, StudyID, drop=TRUE)
+UniqueRiskSet <- as.numeric(UniqueRiskSet)
+
+########################################################################################
+# Data ready for the BUGS Model                                                      
+########################################################################################
+
+Data <- list( "N"=N, "Diet"=Diet, "N_Caseset"=N_Caseset, "CaseIndex"=CaseIndex,
+             "ContIndex"=ContIndex, "Study"=StudyID, "Bmi"=Bmi,"Smoking"=Smoking,
+             "RiskSet"=UniqueRiskSet);
+########################################################################################
+# Model Initialization                                                               
+########################################################################################
+inits1 <- list("beta_QB6"=0.1, "beta_MB6"=0.2,
+               "beta_QFOL"=0.1,"beta_MFOL"=0.1,
+               "beta_RFOL"=0.1, "beta_RB6"=0.1,
+               "beta_TB6" =c(0,0), "beta_TFOL" =c(0,0),  
+               "beta_BMI"=c(0,0), "beta_Smoking" = matrix(nrow=4,ncol=2,c(0,NA,0,0)),  
+               .RNG.name="base::Super-Duper", .RNG.seed=200001);
+
+
+inits2 <- list("beta_QB6"=0.1, "beta_MB6"=0.2,
+               "beta_QFOL"=0.1,"beta_MFOL"=0.1,
+               "beta_RFOL"=0.1, "beta_RB6"=0.1,
+               "beta_TB6" =c(0,0), "beta_TFOL" =c(0,0),
+               "beta_BMI"=c(0,0), "beta_Smoking" = matrix(nrow=4,ncol=2,c(0,NA,0,0)),
+               .RNG.name="base::Wichmann-Hill", .RNG.seed=200002);
+
+
+inits3 <- list("beta_QB6"=0.1, "beta_MB6"=0.2,
+               "beta_QFOL"=0.1,"beta_MFOL"=0.1, 
+               "beta_TB6" =c(0,0), "beta_TFOL" =c(0,0),
+               "beta_RFOL"=0.1, "beta_RB6"=0.1,
+               "beta_BMI"=c(0,0), "beta_Smoking" = matrix(nrow=4,ncol=2,c(0,NA,0,0)),
+               .RNG.name="base::Mersenne-Twister", .RNG.seed=200003);   
+########################################################################################       
+# Running the BUGS Model                                                              
+########################################################################################      
+results_bivariatebayesmodel_RE <- run.jags( model="BayesianHierarchicalModel.bug", 
+                                            monitor=c("beta_QB6", "beta_MB6",
+                                                      "beta_QFOL", "beta_MFOL",
+                                                      "beta_RFOL", "beta_RB6",
+                                                      "beta_TB6", "beta_TFOL", 
+                                                      "beta_BMI", "beta_Smoking",
+                                                      "sigma_qr" , "sigma_b", "sigma_Reff", 
+                                                      "rho", "rhoEq1q2", 
+                                                      "rhoEq1r1", "rhoEq1r2", 
+                                                      "rhoEq2r1", "rhoEq2r2", 
+                                                      "rhoEr1r2", "rhoEm1m2"),
+                                            data=Data, n.chains=3, 
+                                            method="parallel",###cl=cl,###
+                                            inits=list(inits1,inits2,inits3), modules = "glm",
+                                            ###burnin = 400, sample = 100, adapt = 100, thin=1);
+                                            burnin = 15000, sample = 2000, adapt = 10000, thin=10);
+########################################################################################       
+# Showing the results from the BUGS Model                                                              
+########################################################################################  
+results_bivariatebayesmodel_RE
+
+pdf( file='BayesianHierarchicalModel_DensityMixing_280724_1stResults2.pdf')
+par( mai=c(.8,.5,.5,.1)) 
+plot( results_bivariatebayesmodel_RE, layout=c(3,4))
+dev.off()
+
+# Save the summary of the MCMC simulation in a txt-file
+sink("BayesianHierarchicalModel_ParametersResults_280724_1stResults2.txt")
+summary( results_bivariatebayesmodel_RE);
+sink();
+#################################################################################################################################
