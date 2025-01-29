@@ -1,0 +1,204 @@
+#########################################################################################
+# This is the JAGS model definition file for the Bayesian measurement error model  #
+#########################################################################################
+
+# Definition of some of the objects we work with:
+
+# N: sample size, study participants
+
+# Q=(Q_B6,Q_FOL) vector containing the dietary questionnaire measurements
+  
+# R=(R_B6,R_FOL) vector containing the 24HR recall measurements
+  
+# Diet=(Q_B6,Q_FOL,R_B6,R_FOL, )  all dietary measurements in one vector
+
+# T=(T_B6,T_FOL)  vector for the unknown true exposure 
+
+# M=(M_B6,M_FOL)  vector containing the biomarkers measurements
+
+#########################################################################################
+
+data {
+    for (s in 1:N_Caseset) {
+        Ycc[s] <- 1  
+    }
+}
+
+model {
+
+    for (i in 1:N) {
+        ## The Measurement Error Model for the dietary variables and biomarkers.
+        ## Note that measurements are already centered (they are residuals after
+        ## regressing on some covariates) so there are no intercept parameters. 
+        
+        Diet[i,1:4] ~ dmnorm(mean_diet[i,1:4], precision_qr[1:4,1:4])
+        Diet[i,5:6] ~ dmnorm(mean_diet[i,5:6], precision_b[1:2,1:2])
+
+        ## The model was augmented with a replicate of the Diet matrix, 
+        ## sampled from the same prior distribution as the original data:       
+
+        Diet.rep[i,1:4] ~ dmnorm(mean_diet[i,1:4], precision_qr[1:4,1:4])
+        Diet.rep[i,5:6] ~ dmnorm(mean_diet[i,5:6], precision_b[1:2,1:2])
+
+        mean_diet[i,1] <- beta_QB6  * T[i, 1]
+        mean_diet[i,2] <- beta_QFOL * T[i, 2]
+        mean_diet[i,3] <- beta_RB6  * T[i, 1]
+        mean_diet[i,4] <- beta_RFOL * T[i, 2]
+        mean_diet[i,5] <- beta_MB6  * T[i, 1]
+        mean_diet[i,6] <- beta_MFOL * T[i, 2]
+        
+        ## The exposure model with random effect to represent variation between
+        ## case control sets
+        T[i,1:2] <- T0[i,1:2] + Reff[RiskSet[i],1:2]
+        T0[i,1:2] ~ dmnorm(rep(0,2), precision_T[1:2,1:2])
+    }
+    
+    ## Prior distribution for "true" intake T is bivariate normal with mean zero,
+    ## unit standard deviation and correlation rho. True intake is unidentifiable
+    ## so we define it on an arbitrary scale where its mean and standard deviation
+    ## are fixed.
+
+    ## Invert the covariance matrix analytically to give the precision.
+    precision_T[1,1] <- 1/(1 - rho*rho)
+    precision_T[1,2] <- -rho/(1 - rho*rho)
+    precision_T[2,1] <- -rho/(1 - rho*rho)
+    precision_T[2,2] <- 1/(1 - rho*rho)
+    ## Prior on correlation rho penalizes values near 1, -1  
+    rho <- 2 * theta - 1
+    theta ~ dbeta(2,2)
+    
+    ## The Disease Model: conditional logistic regression model 
+    
+    for (s in 1:N_Caseset) {
+
+        Ycc[s] ~ dbern(p[s])
+
+        logit(p[s]) <- beta_TB6[Study[s]] * (T[CaseIndex[s],1] - T[ContIndex[s],1]) 
+        + beta_TFOL[Study[s]] * (T[CaseIndex[s],2] - T[ContIndex[s],2]) 
+        + beta_BMI[Study[s]] * (Bmi[CaseIndex[s]] - Bmi[ContIndex[s]]) 
+        + beta_Smoking[Smoking[CaseIndex[s]], Study[s]]
+        - beta_Smoking[Smoking[ContIndex[s]], Study[s]]
+
+        ## Random effect representing variation between case control sets
+        Reff[s, 1:2] ~ dmnorm(rep(0,2), precision_Reff[1:2,1:2])
+    }
+
+    ## Prior on random effects. We expect variation between case-control
+    ## sets to be smaller than variation between individuals. Hence a smaller
+    ## scale parameter for the scalsed Wishart prior
+
+    ##precision_Reff[1:2,1:2] ~ dscaled.wishart(rep(0.1, 2), 3)
+
+    precision_Reff[1:2,1:2] ~ dwish(omega_Reff, 3) 
+    omega_Reff[1,1] <- 2*Scale_Reff*Scale_Reff
+    omega_Reff[1,2] <- 0
+    omega_Reff[2,1] <- 0
+    omega_Reff[2,2] <- 2*Scale_Reff*Scale_Reff
+    Scale_Reff <- 1.0
+    
+    sigma_Reff[1:2,1:2] <- inverse(precision_Reff[,])  
+
+    ## Disease model
+    ## We need to bound these parameters away from zero to avoid a singularity (i.e. model
+    ## collapses so that all observed variation is explained by measurement error). This is
+    ## consistent with our prior beliefs, i.e. we do believe that these measurements have
+    ## a non-zero correlation with true intake. Choosing the right cutoff point is a matter
+    ## of trial and error. Choose a cut-point too small and you still get a singularity;
+    ## choose one too big and you exclude plausible values.
+    
+    ## Prior for dietary parameters of the measurement model 
+    beta_QB6 ~ dnorm(0.005, 1) T(0.005, )
+    beta_QFOL ~ dnorm(0.01, 1) T(0.01, )
+    
+    ## Prior for biomarkers parameters of the measurement model 
+    beta_MB6 ~ dnorm(0.01, 1) T(0.01, )
+    beta_MFOL ~ dnorm(0.01, 1) T(0.01, )
+
+    ## Prior for 24h recall parameters of the measurement model 
+    beta_RB6 ~ dnorm(0.01, 1) T(0.005, )
+    beta_RFOL ~ dnorm(0.01, 1) T(0.01, )
+    
+    ## Prior on disease model parameters
+    ## beta_TX here corresponds to a log relative risk for a 1-standard deviation
+    ## change in true intake (since T has standard deviation 1). The priors are
+    ## weakly informative with a 95% prior credible interval allowing relative risks
+    ## between 1/7 and 7.
+
+    ## Study 1
+    beta_TB6[1]  ~ dnorm(0, 1)  
+    beta_TFOL[1] ~ dnorm(0, 1)     
+
+    ## Study 2
+    beta_TB6[2]  ~ dnorm(0, 1)
+    beta_TFOL[2] ~ dnorm(0, 1) 
+
+    ## Prior for the BMI categorical variable - study specific
+    beta_BMI[1] ~ dnorm(0, 1)
+    beta_BMI[2] ~ dnorm(0, 1)
+    
+    ## Prior for the Smoking categorical variable
+    beta_Smoking[1,1] ~ dnorm(0, 1)
+    beta_Smoking[2,1] <- 0         
+    beta_Smoking[3,1] ~ dnorm(0, 1)
+    beta_Smoking[4,1] ~ dnorm(0, 1)
+    beta_Smoking[1,2] ~ dnorm(0, 1)
+    beta_Smoking[2,2] <- 0
+    beta_Smoking[3,2] ~ dnorm(0, 1)
+    beta_Smoking[4,2] ~ dnorm(0, 1)
+    
+    ## Unscaled Wishart prior. A scaled Wishart prior here allows the error variance
+    ## for any of the measurements to collapse to zero, causing mixing problems,
+    ## and representing an implausible situation where the measurement represents
+    ## true intake exactly (up to a scale transformation).
+    
+    ## I have bumped up the df here by 1 to penalize error correlations near 1,-1
+    precision_qr ~ dwish(omega_qr, 5)
+    precision_b ~ dwish(omega_b, 3)
+    
+    sigma_qr <- inverse(precision_qr)
+    sigma_b <- inverse(precision_b)
+
+    omega_qr[1,1] <- 2*scale_QB6*scale_QB6
+    omega_qr[1,2] <- 0
+    omega_qr[1,3] <- 0
+    omega_qr[1,4] <- 0 
+    omega_qr[2,1] <- 0
+    omega_qr[2,2] <- 2*scale_QFOL*scale_QFOL
+    omega_qr[2,3] <- 0
+    omega_qr[2,4] <- 0
+    omega_qr[3,1] <- 0
+    omega_qr[3,2] <- 0
+    omega_qr[3,3] <- 2*scale_RB6*scale_RB6
+    omega_qr[3,4] <- 0
+    omega_qr[4,1] <- 0
+    omega_qr[4,2] <- 0
+    omega_qr[4,3] <- 0
+    omega_qr[4,4] <- 2*scale_RFOL*scale_RFOL
+
+    omega_b[1,1] <- 2*scale_MB6*scale_MB6
+    omega_b[1,2] <- 0
+    omega_b[2,1] <- 0
+    omega_b[2,2] <- 2*scale_MFOL*scale_MFOL
+    
+    scale_QB6 <- 1.0
+    scale_QFOL <- 1.0
+    
+    scale_RB6 <- 1.0
+    scale_RFOL <- 1.0
+    
+    scale_MB6 <- 1.0
+    scale_MFOL <- 1.0
+
+    rhoEq1q2 <- sigma_qr[1,2]/(sqrt(sigma_qr[1,1]*sigma_qr[2,2]))
+    rhoEq1r1 <- sigma_qr[1,3]/(sqrt(sigma_qr[1,1]*sigma_qr[3,3]))
+    rhoEq1r2 <- sigma_qr[1,4]/(sqrt(sigma_qr[1,1]*sigma_qr[4,4]))
+    rhoEq2r1 <- sigma_qr[2,3]/(sqrt(sigma_qr[2,2]*sigma_qr[3,3]))
+    rhoEq2r2 <- sigma_qr[2,4]/(sqrt(sigma_qr[2,2]*sigma_qr[4,4]))
+    rhoEr1r2 <- sigma_qr[3,4]/(sqrt(sigma_qr[3,3]*sigma_qr[4,4]))
+
+    rhoEm1m2 <- sigma_b[1,2]/(sqrt(sigma_b[1,1]*sigma_b[2,2]))
+}
+
+# Local Variables:
+# mode: R
+# End:
