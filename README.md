@@ -13,3 +13,7 @@ The file "EpicDataResidualMethod" contains the R code, for the data preparation 
 The file "EpicDataAnalysis" contains the R code, for the implementation and validation of the Bayesian model, presented in Section 2.3.
 
 The file "BayesianHierarchicalModel_DensityMixing" contains the PDF file with the resulting posterior distributions and the mixing of the MCMC simulations chains, discussed in the Section 3.
+
+The file "BayesianHierarchicalModel_ForPosteriorPredictiveCheck.BUG" contains the BUG file, with additional lines of code for the creation of the replication of the Diet vector: Diet.rep, for the Posterior Predictive Checks discussed in the Section 2.3 "Model fitting" of the Supplementary Materials.
+
+The file "PosteriorPredictiveChecks.R" contains the R code, for the implementation and validation of the Bayesian model for the Posterior Predictive Checks discussed in the Section 2.3 "Model fitting" of the Supplementary Materials.
